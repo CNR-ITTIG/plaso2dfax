@@ -16,8 +16,8 @@
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
 #
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
 #
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -65,6 +65,7 @@ L2TCSV_HEADER = [
 
 # ----------------------------------------------------------------------------
 
+
 def FieldsToDict(l2tcsv_field):
     """Parses a l2tcsv string (eg: extra) to return a name,value dictionary.
 
@@ -77,8 +78,8 @@ def FieldsToDict(l2tcsv_field):
     fields_dict = {}
     if l2tcsv_field:
         regexp = r'(\w+): (.*?)[ ]?($|(?= \w+?: ))'
-        fields_dict = dict((match.group(1),match.group(2)) 
-                          for match in re.finditer(regexp, l2tcsv_field))
+        fields_dict = dict((match.group(1), match.group(2))
+                           for match in re.finditer(regexp, l2tcsv_field))
     return fields_dict
 
 
@@ -137,6 +138,7 @@ def AddCustomProperty(cybox_object, name, description, value):
 
 # ----------------------------------------------------------------------------
 
+
 def GetPlasoStorageInformation(pbfilename):
     """TODO"""
     try:
@@ -160,8 +162,8 @@ def GetPlasoStorageInformation(pbfilename):
     collection_information = getattr(
         storage_information, u'collection_information', None)
     if not collection_information:
-      logging.warning(u'Missing collection information.')
-      return
+        logging.warning(u'Missing collection information.')
+        return
 
     filename = collection_information.get(u'file_processed', u'N/A')
     time_of_run = collection_information.get(u'time_of_run', 0)
@@ -178,15 +180,16 @@ def GetPlasoStorageInformation(pbfilename):
     lines_of_text.append(u'Collection information:')
 
     for key, value in collection_information.iteritems():
-      if key in [u'file_processed', u'time_of_run']:
-        continue
-      if key == u'parsers':
-        value = u', '.join(sorted(value))
-      lines_of_text.append(u'\t{0:s} = {1!s}'.format(key, value))
+        if key in [u'file_processed', u'time_of_run']:
+            continue
+        if key == u'parsers':
+            value = u', '.join(sorted(value))
+        lines_of_text.append(u'\t{0:s} = {1!s}'.format(key, value))
 
     storage_file.Close()
 
 # ----------------------------------------------------------------------------
+
 
 def CreateCyboxFile(filename, extra_dict, row):
     """Creates a new CybOX file object.
@@ -230,8 +233,8 @@ def CreateCyboxFile(filename, extra_dict, row):
     cybox_file.file_extension = file_extension.lstrip(u'.')
 
     if u'sha256_hash' in extra_dict:
-        cybox_file.add_hash(cyboxHash(
-            hash_value=extra_dict[u'sha256_hash'], type_=cyboxHash.TYPE_SHA256))
+        cybox_file.add_hash(cyboxHash(hash_value=extra_dict[u'sha256_hash'],
+                            type_=cyboxHash.TYPE_SHA256))
     if u'sha1_hash' in extra_dict:
         cybox_file.add_hash(cyboxHash(
             hash_value=extra_dict[u'sha1_hash'], type_=cyboxHash.TYPE_SHA1))
@@ -289,29 +292,31 @@ def UpgradeFileObjectType(cybox_file, extra_dict, row):
 
 # ----------------------------------------------------------------------------
 
+
 def PlasoEventCallback(cybox_file, row):
     '''TODO'''
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
     AddCustomProperty(cybox_file, row[u'type'], row['sourcetype'],
-        timestamp.isoformat())
+                      timestamp.isoformat())
+
 
 def FileStatCallback(cybox_file, row):
     '''TODO'''
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
     for desc in row[u'type'].split(u';'):
-      if desc == u'crtime':
-        cybox_file.created_time = timestamp
-      elif desc == u'atime':
-        cybox_file.accessed_time = timestamp
-      elif desc == u'mtime':
-        cybox_file.modified_time = timestamp
-      elif desc == u'ctime':
-        # Cybox File Object does not support it.
-        pass
-      else:
-        logging.warning(u'Unknown timestamp description [{}], event {}'.format(
-            desc))
+        if desc == u'crtime':
+            cybox_file.created_time = timestamp
+        elif desc == u'atime':
+            cybox_file.accessed_time = timestamp
+        elif desc == u'mtime':
+            cybox_file.modified_time = timestamp
+        elif desc == u'ctime':
+            # Cybox File Object does not support it.
+            pass
+        else:
+            logging.warning(
+                u'Unknown timestamp description [{}], event {}'.format(desc))
 
 
 def HachoirCallback(cybox_file, row):
@@ -324,7 +329,7 @@ def HachoirCallback(cybox_file, row):
     """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
     AddCustomProperty(cybox_file, row[u'type'], row['sourcetype'],
-        timestamp.isoformat())
+                      timestamp.isoformat())
 
 
 def InternetExplorerHistoryCallback(cybox_file, row):
@@ -335,7 +340,7 @@ def InternetExplorerHistoryCallback(cybox_file, row):
         row: a l2tcsv row.
     """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
-    
+
     row_desc = row[u'desc']
 
     regexp = r'(\w+@[^ ]+)'
@@ -345,7 +350,6 @@ def InternetExplorerHistoryCallback(cybox_file, row):
     user, url = user_and_url.split(u'@')
     description = row_desc.replace(user_and_url, u'')
 
- 
     # Actually there is no a URLHistory Object, only its bindings, using custom
     # properties to enrich the URI object.
     # TODO: review cybox python code to add such object.
@@ -353,9 +357,9 @@ def InternetExplorerHistoryCallback(cybox_file, row):
     cybox_uri = cyboxURI(value=url, type_=u'URLHistoryObjectType')
     AddCustomProperty(cybox_uri, name=u'user', description=u'', value=user)
     AddCustomProperty(cybox_uri, row[u'type'], row['sourcetype'],
-        timestamp.isoformat())
+                      timestamp.isoformat())
     AddCustomProperty(cybox_uri, name=u'URL history information',
-        description=u'msiecf event data', value=description)
+                      description=u'msiecf event data', value=description)
 
     cybox_file.add_related(cybox_uri, u'Contains', inline=True)
 
@@ -416,7 +420,7 @@ def WinRegDefaultCallback(cybox_file, row):
     cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
 
 
-def WinRegMruListExShellItemCallback(cybox_file, row):
+def WinRegMruExShellItemCallback(cybox_file, row):
     """Callback to handle Windows Registry MRUlistext with Shell Items events.
 
     Args:
@@ -451,13 +455,13 @@ def WinRegMruListExShellItemCallback(cybox_file, row):
 EVENT_TO_CYBOX_CALLBACKS = {
     u'filestat': FileStatCallback,
     u'hachoir': HachoirCallback,
-    u'hachoir': HachoirCallback,
     u'msiecf': InternetExplorerHistoryCallback,
-    u'winreg/mrulistex_string_and_shell_item': WinRegMruListExShellItemCallback,
+    u'winreg/mrulistex_string_and_shell_item': WinRegMruExShellItemCallback,
     u'winreg/winreg_default': WinRegDefaultCallback,
 }
 
 # ----------------------------------------------------------------------------
+
 
 def EventToCybox(row, cybox_files):
     """Converts a Plaso event using CybOX formalism.
@@ -501,8 +505,8 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
     """
     cybox_files = {}
     rows = []
-    
-    openhook = fileinput.hook_encoded(u'utf8') 
+
+    openhook = fileinput.hook_encoded(u'utf8')
     file_in = fileinput.FileInput(input, openhook=openhook)
 
     try:
@@ -522,11 +526,11 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
     # Observables containing all CybOX files objects.
     observables = cyboxObservables()
     for key, cybox_file in cybox_files.iteritems():
-      observables.add(cyboxObservable(cybox_file))
+        observables.add(cyboxObservable(cybox_file))
     print observables.to_xml()
 
     # TODO do something with that!
-    #GetPlasoStorageInformation(pbfilename)
+    # GetPlasoStorageInformation(pbfilename)
 
 
 if __name__ == u'__main__':
