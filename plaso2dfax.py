@@ -41,8 +41,13 @@ import sys
 
 from cybox.bindings import url_history_object as cyboxUrlHistory
 from cybox.common import Hash as cyboxHash
+from cybox.common import measuresource as cyboxMeasureSource
 from cybox.common import object_properties as cyboxObjectProperties
 from cybox.common import properties as cyboxProperties
+from cybox.common import tools as cyboxTools
+from cybox.core import action as cyboxAction
+from cybox.core import AssociatedObject as cyboxAssociatedObject
+from cybox.core import Event as cyboxEvent
 from cybox.core import Observable as cyboxObservable
 from cybox.core import Observables as cyboxObservables
 from cybox.objects.file_object import File as cyboxFile
@@ -62,6 +67,17 @@ L2TCSV_HEADER = [
     u'user', u'host', u'short', u'desc', u'version', u'filename', u'inode',
     u'notes', u'format', u'extra'
 ]
+
+PLASO_DEFAULT_OBSERVABLES = {
+    u'major_version': 1,
+    u'minor_version': 4,
+    u'update_version': 1,
+    u'observables': [{}],
+    u'observable_package_source': {
+        u'name': u'Plaso',
+        u'information_source_type': u'l2tcsv',
+    },
+}
 
 # ----------------------------------------------------------------------------
 
@@ -522,15 +538,31 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
         logging.error(u'IO error: {0:s}'.format(exception_io))
         return
 
-    # Once all input rows were parsed, we are ready to create the finally
-    # Observables containing all CybOX files objects.
     observables = cyboxObservables()
+
+    """
+    # TODO: messy code to be removed.
+    event = cyboxEvent()
+    event.description = u'TODO'
+    actions = cyboxAction.Actions()
+    action = cyboxAction.Action()
+    action_associated_objects = cyboxAction.AssociatedObjects()
+    """
+
+    # GetPlasoStorageInformation(pbfilename)
+    # Actually hard coded, take it from plaso storage file if available.
+    logging.debug(u'No Plaso storage provided, using default.')
+    tool = cyboxTools.ToolInformation(u'Plaso')
+    tool.version = u'1.4.1'
+    tool_list = cyboxTools.ToolInformationList()
+    tool_list.append(tool)
+    observables.observable_package_source = cyboxMeasureSource.MeasureSource()
+    observables.observable_package_source.tools = tool_list
+
     for key, cybox_file in cybox_files.iteritems():
         observables.add(cyboxObservable(cybox_file))
-    print observables.to_xml()
 
-    # TODO do something with that!
-    # GetPlasoStorageInformation(pbfilename)
+    print observables.to_xml()
 
 
 if __name__ == u'__main__':
