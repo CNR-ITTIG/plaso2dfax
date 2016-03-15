@@ -57,6 +57,14 @@ from plaso.lib import timelib
 
 # ----------------------------------------------------------------------------
 
+L2TCSV_HEADER = [
+    u'date', u'time', u'timezone', u'MACB', u'source', u'sourcetype', u'type',
+    u'user', u'host', u'short', u'desc', u'version', u'filename', u'inode',
+    u'notes', u'format', u'extra'
+]
+
+# ----------------------------------------------------------------------------
+
 def FieldsToDict(l2tcsv_field):
     """Parses a l2tcsv string (eg: extra) to return a name,value dictionary.
 
@@ -496,10 +504,14 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
     
     openhook = fileinput.hook_encoded(u'utf8') 
     file_in = fileinput.FileInput(input, openhook=openhook)
-    reader = csv.DictReader(file_in)
-    # TODO: add check that csv has the expected plaso headers.
 
     try:
+        reader = csv.DictReader(file_in, fieldnames=L2TCSV_HEADER)
+        # Check if input file or stdin has l2tcsv headers.
+        first_row = reader.next()
+        if first_row[u'date'] != u'date' and first_row[u'extra'] != u'extra':
+            EventToCybox(first_row, cybox_files)
+        # Process lines.
         for row in reader:
             EventToCybox(row, cybox_files)
     except IOError as exception_io:
