@@ -493,15 +493,18 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
     """
     cybox_files = {}
     rows = []
-
-    openhook = fileinput.hook_encoded(u'utf8')
-    # TODO: add check on file existance.
+    
+    openhook = fileinput.hook_encoded(u'utf8') 
     file_in = fileinput.FileInput(input, openhook=openhook)
     reader = csv.DictReader(file_in)
     # TODO: add check that csv has the expected plaso headers.
 
-    for row in reader:
-        EventToCybox(row, cybox_files)
+    try:
+        for row in reader:
+            EventToCybox(row, cybox_files)
+    except IOError as exception_io:
+        logging.error(u'IO error: {0:s}'.format(exception_io))
+        return
 
     # Once all input rows were parsed, we are ready to create the finally
     # Observables containing all CybOX files objects.
@@ -535,4 +538,3 @@ if __name__ == u'__main__':
 
     Convert(options.description, options.output, options.input,
             options.pbfilename)
-    sys.exit()
