@@ -39,15 +39,16 @@ import pprint
 import re
 import sys
 
-from cybox.bindings import custom_object as cyboxCustom
-from cybox.bindings.url_history_object import (
-    URLHistoryEntryType as cyboxUrlHistoryEntry)
+from cybox.bindings import url_history_object as cyboxUrlHistory
 from cybox.common import Hash as cyboxHash
 from cybox.common import object_properties as cyboxObjectProperties
+from cybox.common import properties as cyboxProperties
 from cybox.core import Observable as cyboxObservable
 from cybox.core import Observables as cyboxObservables
 from cybox.objects.file_object import File as cyboxFile
+from cybox.objects.uri_object import URI as cyboxURI
 from cybox.objects.win_file_object import WinFile as cyboxWinFile
+from cybox.objects import win_registry_key_object as cyboxWinRegistry
 
 from plaso.cli import analysis_tool
 from plaso.frontend import analysis_frontend
@@ -56,48 +57,80 @@ from plaso.lib import timelib
 
 # ----------------------------------------------------------------------------
 
-def GetExtraDict(extra_string):
-    """TODO."""
-    extra_dict = {}
-    if extra_string:
-        regexp = r'(\w*): ([^ ]*)[ ]*'
-        extra_dict = dict((match.group(1), match.group(2))
-                          for match in re.finditer(regexp, extra_string))
-    return extra_dict
+def FieldsToDict(l2tcsv_field):
+    """Parses a l2tcsv string (eg: extra) to return a name,value dictionary.
 
+    Args:
+        l2tcsv_field: l2tcsv input string (eg: extra).
 
-def FieldsToDict(fields):
+    Returns:
+        A name,value dictionary.
+    """
     fields_dict = {}
-    if fields:
+    if l2tcsv_field:
         regexp = r'(\w+): (.*?)[ ]?($|(?= \w+?: ))'
         fields_dict = dict((match.group(1),match.group(2)) 
-                          for match in re.finditer(regexp, fields))
+                          for match in re.finditer(regexp, l2tcsv_field))
     return fields_dict
 
 
-def GetDatetime(row):
-    return dateutil.parser.parse(
-        u' '.join((row[u'date'], row[u'time'], row[u'timezone'])))
+def GetDatetime(date, time, timezone):
+    """Creates a datetime object from l2tcsv date, time and timestamp.
+
+    Args:
+        date: l2tcsv date field.
+        time: l2tcsv time field.
+        timezone: l2tcsv timezone field.
+
+    Returns:
+        A datetime object (instance of datetime.datetime).
+    """
+    return dateutil.parser.parse(u' '.join((date, time, timezone)))
 
 
-def CopyFileObject(dst, src):
-    """TODO."""
-    dst.file_name = src.file_name
-    dst.file_path = src.file_path
-    dst.file_extension = src.file_extension
-    dst.device_path = src.device_path
-    dst.full_path = src.full_path
-    dst.size_in_bytes = src.size_in_bytes
-    dst.hashes = src.hashes
-    dst.digital_signatures = src.digital_signatures
-    dst.modified_time = src.modified_time
-    dst.accessed_time = src.accessed_time
-    dst.created_time = src.created_time
+def SplitWinRegistryEvent(event_registry_description):
+    """Split a Windows Registry event in its hive, key name and data parts.
+
+    Args:
+        event_registry_description: l2tcsv registry key event description.
+
+    Returns:
+        The hive, the registry key name and the registry_data.
+    """
+    regexp = r'^\[([^\\]+)\\([^\]]+)\] (.*)$'
+    re_match = re.match(regexp, event_registry_description)
+
+    registry_hive = re_match.group(1)
+    registry_key = re_match.group(2)
+    registry_data = re_match.group(3)
+
+    return registry_hive, registry_key, registry_data
+
+
+def AddCustomProperty(cybox_object, name, description, value):
+    """Helper function to add a custom property to a CybOX object.
+       This function is used to take into account unmanged Plaso events.
+
+    Args:
+        cybox_object: the CybOX object to be updated.
+        name: custom property name.
+        description: custom property description.
+        value: custom property value.
+    """
+    custom_property = cyboxObjectProperties.Property()
+    custom_property.name = name
+    custom_property.description = description
+    custom_property._value = value
+
+    if not cybox_object.custom_properties:
+        cybox_object.custom_properties = (
+            cyboxObjectProperties.CustomProperties())
+    cybox_object.custom_properties.append(custom_property)
 
 # ----------------------------------------------------------------------------
 
 def GetPlasoStorageInformation(pbfilename):
-    """Prints the storage information. TODO"""
+    """TODO"""
     try:
         front_end = analysis_frontend.AnalysisFrontend()
         storage_file = front_end.OpenStorage(pbfilename)
@@ -148,20 +181,30 @@ def GetPlasoStorageInformation(pbfilename):
 # ----------------------------------------------------------------------------
 
 def CreateCyboxFile(filename, extra_dict, row):
-    '''todo'''
+    """Creates a new CybOX file object.
+       Depending on the input, it can create a Windows file object, a Unix file
+       object or a generic one.
+
+    Args:
+        filename: filename as extracted from l2tcsv row.
+        extra_dict: l2tcsv extra fields dictionary.
+        row: a l2tcsv row.
+
+    Returns:
+        A CybOX generic/Windows/Unix file object depending on input.
+    """
     logging.debug(u'Creating new Cybox File: {0:s}'.format(filename))
 
-    if u'FILE' == row[u'source']:
+    # If the plaso event is a filestat, we tiplically have file related
+    # information useful to describe the file.
+    if u'filestat' == row[u'format']:
         file_system_type = row[u'sourcetype'].split(u' ')[0]
 
-        # TODO: add Unix files.
         if file_system_type == u'NTFS_DETECT':
             cybox_file = cyboxWinFile()
         if file_system_type == u'FAT16':
             cybox_file = cyboxFile()
         else:
-            logging.debug(u'Unmanaged FS [{0:s}], using default CybOX file '
-                          'object.'.format(file_system_type))
             cybox_file = cyboxFile()
 
         file_size_string = extra_dict.get(u'file_size', None)
@@ -176,7 +219,7 @@ def CreateCyboxFile(filename, extra_dict, row):
 
     cybox_file.file_name = file_name
     cybox_file.file_path = file_path
-    cybox_file.file_extension = file_extension.lstrip(u'.')        
+    cybox_file.file_extension = file_extension.lstrip(u'.')
 
     if u'sha256_hash' in extra_dict:
         cybox_file.add_hash(cyboxHash(
@@ -191,38 +234,70 @@ def CreateCyboxFile(filename, extra_dict, row):
     return cybox_file
 
 
-def UpdateObjectFileType(cybox_file, extra_dict, row):
-    """TODO."""
-    if u'FILE' == row[u'source']:
+def CopyFileObjectData(dst_file_object, src_file_object):
+    """Copies source file object information to a file object destination.
+
+    Args:
+        dst_file_object: the destination CybOX file object.
+        src_file_object: the source CybOX file object.
+    """
+    dst_file_object.file_name = src_file_object.file_name
+    dst_file_object.file_path = src_file_object.file_path
+    dst_file_object.file_extension = src_file_object.file_extension
+    dst_file_object.device_path = src_file_object.device_path
+    dst_file_object.full_path = src_file_object.full_path
+    dst_file_object.size_in_bytes = src_file_object.size_in_bytes
+    dst_file_object.hashes = src_file_object.hashes
+    dst_file_object.digital_signatures = src_file_object.digital_signatures
+    dst_file_object.modified_time = src_file_object.modified_time
+    dst_file_object.accessed_time = src_file_object.accessed_time
+    dst_file_object.created_time = src_file_object.created_time
+    dst_file_object.custom_properties = src_file_object.custom_properties
+
+
+def UpgradeFileObjectType(cybox_file, extra_dict, row):
+    """Creates a new CybOX Windows or Unix file object and it copies
+       the data available from the actual CybOX file object.
+
+    Args:
+        cybox_file: the actual CybOX file object.
+        extra_dict: l2tcsv extra fields dictionary.
+        row: a l2tcsv row.
+
+    Returns:
+        A CybOX Windows/Unix file object depending on input.
+    """
+    if u'filestat' == row[u'format']:
         file_system_type = row[u'sourcetype'].split(u' ')[0]
 
-        # TODO: add Unix files.
+        # Only Windows file upgrades are actually managed.
         if file_system_type == u'NTFS_DETECT':
             if u'WinFile' != cybox_file.__class__.__name__:
                 cybox_win_file = cyboxWinFile()
-                CopyFileObject(cybox_win_file, cybox_file)
+                CopyFileObjectData(cybox_win_file, cybox_file)
                 cybox_file = cybox_win_file
 
     return cybox_file
 
 # ----------------------------------------------------------------------------
 
-def Dummy(cybox_file, extra_dict, row):
+def PlasoEventCallback(cybox_file, row):
     '''TODO'''
-    logging.debug(u'Called Dummy callback.')
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
+    AddCustomProperty(cybox_file, row[u'type'], row['sourcetype'],
+        timestamp.isoformat())
 
-
-def FileStat(cybox_file, extra_dict, row):
+def FileStatCallback(cybox_file, row):
     '''TODO'''
-    date_use = GetDatetime(row)
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
     for desc in row[u'type'].split(u';'):
       if desc == u'crtime':
-        cybox_file.created_time = date_use
+        cybox_file.created_time = timestamp
       elif desc == u'atime':
-        cybox_file.accessed_time = date_use
+        cybox_file.accessed_time = timestamp
       elif desc == u'mtime':
-        cybox_file.modified_time = date_use
+        cybox_file.modified_time = timestamp
       elif desc == u'ctime':
         # Cybox File Object does not support it.
         pass
@@ -231,48 +306,191 @@ def FileStat(cybox_file, extra_dict, row):
             desc))
 
 
-def Hachoir(cybox_file, extra_dict, row):
-    '''TODO'''
-    date_use = GetDatetime(row)
+def HachoirCallback(cybox_file, row):
+    """Callback to handle Hachoir events.
+       Actually it does no more than the default callback.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+    """
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
+    AddCustomProperty(cybox_file, row[u'type'], row['sourcetype'],
+        timestamp.isoformat())
+
+
+def InternetExplorerHistoryCallback(cybox_file, row):
+    """Callback to handle msiecf events.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+    """
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
+    
+    row_desc = row[u'desc']
+
+    regexp = r'(\w+@[^ ]+)'
+    re_match = re.search(regexp, row_desc)
+
+    user_and_url = re_match.group(0)
+    user, url = user_and_url.split(u'@')
+    description = row_desc.replace(user_and_url, u'')
+
+ 
+    # Actually there is no a URLHistory Object, only its bindings, using custom
+    # properties to enrich the URI object.
+    # TODO: review cybox python code to add such object.
+
+    cybox_uri = cyboxURI(value=url, type_=u'URLHistoryObjectType')
+    AddCustomProperty(cybox_uri, name=u'user', description=u'', value=user)
+    AddCustomProperty(cybox_uri, row[u'type'], row['sourcetype'],
+        timestamp.isoformat())
+    AddCustomProperty(cybox_uri, name=u'URL history information',
+        description=u'msiecf event data', value=description)
+
+    cybox_file.add_related(cybox_uri, u'Contains', inline=True)
+
+
+def WinRegMruListExCallback(cybox_file, row):
+    """Callback to handle Windows Registry MRUlistext events.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+    """
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
+
+    hive, name, data = SplitWinRegistryEvent(row[u'desc'])
+
+    cybox_reg_key = cyboxWinRegistry.WinRegistryKey()
+    cybox_reg_key.values = cyboxWinRegistry.RegistryValues()
+    cybox_reg_key.key = name
+    cybox_reg_key.hive = hive
+    cybox_reg_key.modified_time = timestamp
+
+    regexp = r'Index: [0-9] \[MRU Value ([0-9]+)\]: (.+?)[ ]?(?=Index:|$)'
+    for match in re.finditer(regexp, data):
+        cybox_reg_value = cyboxWinRegistry.RegistryValue()
+        cybox_reg_value.name = match.group(1)
+        cybox_reg_value.datatype = u'REG_BINARY'
+        cybox_reg_value.data = match.group(2)
+        cybox_reg_key.values.append(cybox_reg_value)
+
+    cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
+
+
+def WinRegDefaultCallback(cybox_file, row):
+    """Callback to handle Windows Registry default events.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+    """
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
+
+    hive, name, data = SplitWinRegistryEvent(row[u'desc'])
+
+    cybox_reg_key = cyboxWinRegistry.WinRegistryKey()
+    cybox_reg_key.values = cyboxWinRegistry.RegistryValues()
+    cybox_reg_key.key = name
+    cybox_reg_key.hive = hive
+    cybox_reg_key.modified_time = timestamp
+
+    regexp = r'[ ]?([^:]+): \[([^\]]+)\] (.+?)[ ]?($|(?= \w+?: ))'
+    for match in re.finditer(regexp, data):
+        cybox_reg_value = cyboxWinRegistry.RegistryValue()
+        cybox_reg_value.name = match.group(1)
+        cybox_reg_value.datatype = match.group(2)
+        cybox_reg_value.data = match.group(3)
+        cybox_reg_key.values.append(cybox_reg_value)
+
+    cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
+
+
+def WinRegMruListExShellItemCallback(cybox_file, row):
+    """Callback to handle Windows Registry MRUlistext with Shell Items events.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+    """
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
+
+    hive, name, data = SplitWinRegistryEvent(row[u'desc'])
+
+    cybox_reg_key = cyboxWinRegistry.WinRegistryKey()
+    cybox_reg_key.values = cyboxWinRegistry.RegistryValues()
+    cybox_reg_key.key = name
+    cybox_reg_key.hive = hive
+    cybox_reg_key.modified_time = timestamp
+
+    regexp = (r'[ ]?Index: [0-9] \[MRU Value ([0-9]+)\]: '
+              'Path: (.+?)[ ]+(?=Shell item: )[ ]?Shell item: \[([^\]]+)\]')
+    for match in re.finditer(regexp, data):
+        cybox_reg_value = cyboxWinRegistry.RegistryValue()
+        cybox_reg_value.name = match.group(1)
+        cybox_reg_value.datatype = u'REG_BINARY'
+        cybox_reg_value.data = u'Path: [{0:s}] ShellItem: [{1:s}]'.format(
+            match.group(2), match.group(3))
+        cybox_reg_key.values.append(cybox_reg_value)
+
+    cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
 
 
 # A dict containing mappings between the name of event source and
 # a callback function used for the conversion to a Cybox object.
 EVENT_TO_CYBOX_CALLBACKS = {
-  u'filestat': FileStat,
-  u'hachoir': Hachoir,
+    u'filestat': FileStatCallback,
+    u'hachoir': HachoirCallback,
+    u'hachoir': HachoirCallback,
+    u'msiecf': InternetExplorerHistoryCallback,
+    u'winreg/mrulistex_string_and_shell_item': WinRegMruListExShellItemCallback,
+    u'winreg/winreg_default': WinRegDefaultCallback,
 }
 
 # ----------------------------------------------------------------------------
 
 def EventToCybox(row, cybox_files):
-    """Converts a plaso event to Cybox.
+    """Converts a Plaso event using CybOX formalism.
 
     Args:
-      event_object: the event object (instance of EventObject).
+        row: l2tcsv row.
+        cybox_files: the CybOX file objects dictionary.
     """
     filename = row[u'filename']
-    extra_dict = GetExtraDict(row[u'extra'])
+    extra_dict = FieldsToDict(row[u'extra'])
+
+    if not filename:
+        logging.warning('Skipping row, filename is empty.')
+        return
 
     cybox_file = cybox_files.get(filename, None)
     if not cybox_file:
         logging.debug(u'New Cybox File, file {0:s}'.format(filename))
         cybox_file = CreateCyboxFile(filename, extra_dict, row)
     else:
-        cybox_file = UpdateObjectFileType(cybox_file, extra_dict, row)
+        cybox_file = UpgradeFileObjectType(cybox_file, extra_dict, row)
 
     callback_function = EVENT_TO_CYBOX_CALLBACKS.get(row[u'format'], None)
     if not callback_function:
-        callback_function = Dummy
+        callback_function = PlasoEventCallback
 
-    callback_function(cybox_file, extra_dict, row)
+    callback_function(cybox_file, row)
 
     cybox_files[filename] = cybox_file
 
 
 def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
             pbfilename=u''):
-    """TODO: add a description."""
+    """The main loop routine in charge to read the data and to report results.
+
+    Args:
+        description: todo.
+        output: the output channel to be used for the results.
+        input: the input channel to be used to feed l2tcsv data.
+        pbfilename: the Plaso Buffer (pb) storage file.
+    """
     cybox_files = {}
     rows = []
 
@@ -285,6 +503,8 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
     for row in reader:
         EventToCybox(row, cybox_files)
 
+    # Once all input rows were parsed, we are ready to create the finally
+    # Observables containing all CybOX files objects.
     observables = cyboxObservables()
     for key, cybox_file in cybox_files.iteritems():
       observables.add(cyboxObservable(cybox_file))
