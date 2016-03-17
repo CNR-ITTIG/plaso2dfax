@@ -390,41 +390,12 @@ def InternetExplorerHistoryCallback(cybox_file, row):
     else:
         # Actually there is no a URLHistory Object, only its bindings, using
         # custom properties to enrich the URI object.
-        # TODO: review cybox python code to add such object.
         cybox_uri = cyboxURI(value=url, type_=u'URLHistoryObjectType')
         AddCustomProperty(cybox_uri, name=u'user', description=u'', value=user)
         AddCustomProperty(cybox_uri, name=u'URL history information',
                           description=u'msiecf event data', value=description)
 
         cybox_file.add_related(cybox_uri, u'Contains', inline=True)
-
-
-def WinRegMruListExCallback(cybox_file, row):
-    """Callback to handle Windows Registry MRUlistext events.
-
-    Args:
-        cybox_file: the CybOX object file to be updated.
-        row: a l2tcsv row.
-    """
-    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
-
-    hive, name, data = SplitWinRegistryEvent(row[u'desc'])
-
-    cybox_reg_key = cyboxWinRegistry.WinRegistryKey()
-    cybox_reg_key.values = cyboxWinRegistry.RegistryValues()
-    cybox_reg_key.key = name
-    cybox_reg_key.hive = hive
-    cybox_reg_key.modified_time = timestamp
-
-    regexp = r'Index: [0-9] \[MRU Value ([0-9]+)\]: (.+?)[ ]?(?=Index:|$)'
-    for match in re.finditer(regexp, data):
-        cybox_reg_value = cyboxWinRegistry.RegistryValue()
-        cybox_reg_value.name = match.group(1)
-        cybox_reg_value.datatype = u'REG_BINARY'
-        cybox_reg_value.data = match.group(2)
-        cybox_reg_key.values.append(cybox_reg_value)
-
-    cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
 
 
 def WinRegDefaultCallback(cybox_file, row):
@@ -450,6 +421,34 @@ def WinRegDefaultCallback(cybox_file, row):
         cybox_reg_value.name = match.group(1)
         cybox_reg_value.datatype = match.group(2)
         cybox_reg_value.data = match.group(3)
+        cybox_reg_key.values.append(cybox_reg_value)
+
+    cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
+
+
+def WinRegMruListExCallback(cybox_file, row):
+    """Callback to handle Windows Registry MRUlistext events.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+    """
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
+
+    hive, name, data = SplitWinRegistryEvent(row[u'desc'])
+
+    cybox_reg_key = cyboxWinRegistry.WinRegistryKey()
+    cybox_reg_key.values = cyboxWinRegistry.RegistryValues()
+    cybox_reg_key.key = name
+    cybox_reg_key.hive = hive
+    cybox_reg_key.modified_time = timestamp
+
+    regexp = r'Index: [0-9] \[MRU Value ([0-9]+)\]: (.+?)[ ]?(?=Index:|$)'
+    for match in re.finditer(regexp, data):
+        cybox_reg_value = cyboxWinRegistry.RegistryValue()
+        cybox_reg_value.name = match.group(1)
+        cybox_reg_value.datatype = u'REG_BINARY'
+        cybox_reg_value.data = match.group(2)
         cybox_reg_key.values.append(cybox_reg_value)
 
     cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
@@ -570,7 +569,6 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
 
     # GetPlasoStorageInformation(pbfilename)
     # Actually hard coded, take it from plaso storage file if available.
-    logging.debug(u'No Plaso storage provided, using default.')
     tool = cyboxTools.ToolInformation(u'Plaso')
     tool.version = u'1.4.1'
     tool_list = cyboxTools.ToolInformationList()
