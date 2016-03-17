@@ -52,6 +52,7 @@ from cybox.core import Observable as cyboxObservable
 from cybox.core import Observables as cyboxObservables
 from cybox.objects.file_object import File as cyboxFile
 from cybox.objects.uri_object import URI as cyboxURI
+from cybox.objects import win_event_log_object as cyboxWinEventLog
 from cybox.objects.win_file_object import WinFile as cyboxWinFile
 from cybox.objects import win_registry_key_object as cyboxWinRegistry
 
@@ -164,6 +165,28 @@ def SplitWinRegistryEvent(event_registry_description):
 
     return registry_hive, registry_key, registry_data
 
+
+def WinEventSearch(regexp, event_string, remove=True):
+    """Searches inside an event string for a matching regular expression.
+       Note: it assumes the regexp has one group search.
+
+    Args:
+        regexp: the regular expression string to be used.
+        event_string: the search target string.
+        remove: flag, if True causes the matching substring to be removed
+
+    Returns:
+        The matched group and the source string, stripped if remove is True.
+    """
+    match_group1 = u''
+    re_match = re.search(regexp, event_string)
+    if re_match:
+        match_group1 = re_match.group(1)
+        if remove:
+            event_string = event_string.replace(re_match.group(0), u'')
+
+    return match_group1, event_string
+
 # ----------------------------------------------------------------------------
 
 
@@ -269,14 +292,15 @@ def UpgradeFileObjectType(cybox_file, extra_dict, row):
 # ----------------------------------------------------------------------------
 
 
-def PlasoEventCallback(cybox_file, row):
+def PlasoEventCallback(cybox_file, row, cybox_related):
     """TODO"""
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
     AddCustomProperty(cybox_file, row[u'type'], row[u'sourcetype'],
                       timestamp.isoformat())
+    return cybox_file, cybox_related
 
 
-def FileStatCallback(cybox_file, row):
+def FileStatCallback(cybox_file, row, cybox_related):
     """TODO"""
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
@@ -293,27 +317,37 @@ def FileStatCallback(cybox_file, row):
         else:
             logging.warning(
                 u'Unknown timestamp description [{}], event {}'.format(desc))
+    return cybox_file, cybox_related
 
 
-def HachoirCallback(cybox_file, row):
+def HachoirCallback(cybox_file, row, cybox_related):
     """Callback to handle Hachoir events.
        Actually it does no more than the default callback.
 
     Args:
         cybox_file: the CybOX object file to be updated.
         row: a l2tcsv row.
+        cybox_related: helper dictionary for related objects fast lookup.
+
+    Returns:
+        The updated cybox_file and its cybox_related.
     """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
     AddCustomProperty(cybox_file, row[u'type'], row[u'sourcetype'],
                       timestamp.isoformat())
+    return cybox_file, cybox_related
 
 
-def InternetExplorerHistoryCallback(cybox_file, row):
+def InternetExplorerHistoryCallback(cybox_file, row, cybox_related):
     """Callback to handle msiecf events.
 
     Args:
         cybox_file: the CybOX object file to be updated.
         row: a l2tcsv row.
+        cybox_related: helper dictionary for related objects fast lookup.
+
+    Returns:
+        The updated cybox_file and its cybox_related.
     """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
@@ -341,13 +375,79 @@ def InternetExplorerHistoryCallback(cybox_file, row):
 
         cybox_file.add_related(cybox_uri, u'Contains', inline=True)
 
+    return cybox_file, cybox_related
 
-def WinRegDefaultCallback(cybox_file, row):
+
+def WinEventCallback(cybox_file, row, cybox_related):
+    """Callback to handle Windows Events.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+        cybox_related: helper dictionary for related objects fast lookup.
+
+    Returns:
+        The updated cybox_file and its cybox_related.
+    """
+    timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
+    src = row[u'desc']
+    rkey = hash(row[u'desc'] + row[u'format'])
+
+    if rkey in cybox_related:
+        win_event_object = cybox_related[rkey]
+    else:
+        win_event_object = cyboxWinEventLog.WinEventLog()
+
+        eid, src = WinEventSearch(r'^\[([0-9]+) \/ 0x[0-9a-z]+\] ', src)
+        severity, src = WinEventSearch(r'Severity: (\w+) ', src)
+        index, src = WinEventSearch(r'Record Number: ([0-9]+) ', src)
+        type, src = WinEventSearch(r'Event Type: (.*?)(?= event ) event ', src)
+        category_num, src = WinEventSearch(r'Event Category: ([0-9]+) ', src)
+        source_name, src = WinEventSearch(
+            r'Source Name: (.*?)(?= Computer Name: ) ', src)
+        computer_name, src = WinEventSearch('Computer Name: ([^ ]+) ', src)
+        msg, src = WinEventSearch(r'Message string: (.*?)(?= Strings: ) ', src)
+        unf_strings, src = WinEventSearch(r'Strings: \[([^\]]*)\]', src)
+
+        win_event_object.eid = int(eid)
+        win_event_object.type = type
+        win_event_object.index = int(index)
+        win_event_object.category_num = int(category_num)
+        win_event_object.source = source_name
+        win_event_object.machine = computer_name
+        if msg:
+            win_event_object.message = msg
+
+        if unf_strings:
+            umsg_cybox = cyboxWinEventLog.UnformattedMessageList()
+            for match in re.finditer(r'\'([^\']*)\'[ ]?', unf_strings):
+                umsg_cybox.append(match.group(1))
+            win_event_object.unformatted_message_list = umsg_cybox
+
+        cybox_related[rkey] = win_event_object
+        cybox_file.add_related(win_event_object, u'Contains', inline=True)
+
+    if row[u'type'] == u'Content Modification Time':
+        win_event_object.write_time = timestamp
+    elif row[u'type'] == u'Creation Time':
+        win_event_object.generation_time = timestamp
+    else:
+        logging.warning(
+            u'Windows Event uknown timestamp type: {0:s}'.format(row[u'type']))
+
+    return cybox_file, cybox_related
+
+
+def WinRegDefaultCallback(cybox_file, row, cybox_related):
     """Callback to handle Windows Registry default events.
 
     Args:
         cybox_file: the CybOX object file to be updated.
         row: a l2tcsv row.
+        cybox_related: helper dictionary for related objects fast lookup.
+
+    Returns:
+        The updated cybox_file and its cybox_related.
     """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
@@ -369,13 +469,19 @@ def WinRegDefaultCallback(cybox_file, row):
 
     cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
 
+    return cybox_file, cybox_related
 
-def WinRegMruListExCallback(cybox_file, row):
+
+def WinRegMruListExCallback(cybox_file, row, cybox_related):
     """Callback to handle Windows Registry MRUlistext events.
 
     Args:
         cybox_file: the CybOX object file to be updated.
         row: a l2tcsv row.
+        cybox_related: helper dictionary for related objects fast lookup.
+
+    Returns:
+        The updated cybox_file and its cybox_related.
     """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
@@ -397,13 +503,19 @@ def WinRegMruListExCallback(cybox_file, row):
 
     cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
 
+    return cybox_file, cybox_related
 
-def WinRegMruExShellItemCallback(cybox_file, row):
+
+def WinRegMruExShellItemCallback(cybox_file, row, cybox_related):
     """Callback to handle Windows Registry MRUlistext with Shell Items events.
 
     Args:
         cybox_file: the CybOX object file to be updated.
         row: a l2tcsv row.
+        cybox_related: helper dictionary for related objects fast lookup.
+
+    Returns:
+        The updated cybox_file and its cybox_related.
     """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
@@ -427,6 +539,8 @@ def WinRegMruExShellItemCallback(cybox_file, row):
 
     cybox_file.add_related(cybox_reg_key, u'Contains', inline=True)
 
+    return cybox_file, cybox_related
+
 
 # A dict containing mappings between the name of event source and
 # a callback function used for the conversion to a Cybox object.
@@ -434,6 +548,7 @@ EVENT_TO_CYBOX_CALLBACKS = {
     u'filestat': FileStatCallback,
     u'hachoir': HachoirCallback,
     u'msiecf': InternetExplorerHistoryCallback,
+    u'winevt': WinEventCallback,
     u'winreg/mrulistex_string_and_shell_item': WinRegMruExShellItemCallback,
     u'winreg/winreg_default': WinRegDefaultCallback,
 }
@@ -441,12 +556,13 @@ EVENT_TO_CYBOX_CALLBACKS = {
 # ----------------------------------------------------------------------------
 
 
-def EventToCybox(row, cybox_files):
+def EventToCybox(row, cybox_files, cybox_files_related):
     """Converts a Plaso event using CybOX formalism.
 
     Args:
         row: l2tcsv row.
         cybox_files: the CybOX file objects dictionary.
+        cybox_files_related: the CybOX objects related to files dictionary.
     """
     filename = row[u'filename']
     extra_dict = FieldsToDict(row[u'extra'])
@@ -462,13 +578,16 @@ def EventToCybox(row, cybox_files):
     else:
         cybox_file = UpgradeFileObjectType(cybox_file, extra_dict, row)
 
+    if filename not in cybox_files_related:
+        cybox_files_related[filename] = {}
+    cybox_related = cybox_files_related[filename]
+
     callback_function = EVENT_TO_CYBOX_CALLBACKS.get(row[u'format'], None)
     if not callback_function:
         callback_function = PlasoEventCallback
 
-    callback_function(cybox_file, row)
-
-    cybox_files[filename] = cybox_file
+    cybox_files[filename], cybox_files_related[filename] = (
+        callback_function(cybox_file, row, cybox_related))
 
 
 def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin'):
@@ -480,6 +599,7 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin'):
         input: the input channel to be used to feed l2tcsv data.
     """
     cybox_files = {}
+    cybox_files_related = {}
     rows = []
 
     openhook = fileinput.hook_encoded(u'utf8')
@@ -490,10 +610,10 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin'):
         # Check if input file or stdin has l2tcsv headers.
         first_row = reader.next()
         if first_row[u'date'] != u'date' and first_row[u'extra'] != u'extra':
-            EventToCybox(first_row, cybox_files)
+            EventToCybox(first_row, cybox_files, cybox_files_related)
         # Process lines.
         for row in reader:
-            EventToCybox(row, cybox_files)
+            EventToCybox(row, cybox_files, cybox_files_related)
     except IOError as exception_io:
         logging.error(u'IO error: {0:s}'.format(exception_io))
         return
