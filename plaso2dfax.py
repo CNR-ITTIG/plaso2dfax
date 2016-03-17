@@ -82,6 +82,27 @@ PLASO_DEFAULT_OBSERVABLES = {
 # ----------------------------------------------------------------------------
 
 
+def AddCustomProperty(cybox_object, name, description, value):
+    """Helper function to add a custom property to a CybOX object.
+       This function is used to take into account unmanged Plaso events.
+
+    Args:
+        cybox_object: the CybOX object to be updated.
+        name: custom property name.
+        description: custom property description.
+        value: custom property value.
+    """
+    custom_property = cyboxObjectProperties.Property()
+    custom_property.name = name
+    custom_property.description = description
+    custom_property._value = value
+
+    if not cybox_object.custom_properties:
+        cybox_object.custom_properties = (
+            cyboxObjectProperties.CustomProperties())
+    cybox_object.custom_properties.append(custom_property)
+
+
 def FieldsToDict(l2tcsv_field):
     """Parses a l2tcsv string (eg: extra) to return a name,value dictionary.
 
@@ -113,6 +134,22 @@ def GetDatetime(date, time, timezone):
     return dateutil.parser.parse(u' '.join((date, time, timezone)))
 
 
+def GetRelatedObjects(cybox_object, klass):
+    """Returns all related objects of the provided type.
+
+    Args:
+        cybox_object: the CybOX object from which to get related.
+        klass: related object class seached for.
+
+    Returns:
+        Generates all objects of the target type related to source.
+    """
+    for related in cybox_object.parent.related_objects:
+        related_object = related.properties
+        if isinstance(related_object, klass):
+            yield related_object
+
+
 def SplitWinRegistryEvent(event_registry_description):
     """Split a Windows Registry event in its hive, key name and data parts.
 
@@ -130,27 +167,6 @@ def SplitWinRegistryEvent(event_registry_description):
     registry_data = re_match.group(3)
 
     return registry_hive, registry_key, registry_data
-
-
-def AddCustomProperty(cybox_object, name, description, value):
-    """Helper function to add a custom property to a CybOX object.
-       This function is used to take into account unmanged Plaso events.
-
-    Args:
-        cybox_object: the CybOX object to be updated.
-        name: custom property name.
-        description: custom property description.
-        value: custom property value.
-    """
-    custom_property = cyboxObjectProperties.Property()
-    custom_property.name = name
-    custom_property.description = description
-    custom_property._value = value
-
-    if not cybox_object.custom_properties:
-        cybox_object.custom_properties = (
-            cyboxObjectProperties.CustomProperties())
-    cybox_object.custom_properties.append(custom_property)
 
 # ----------------------------------------------------------------------------
 
@@ -366,18 +382,21 @@ def InternetExplorerHistoryCallback(cybox_file, row):
     user, url = user_and_url.split(u'@')
     description = row_desc.replace(user_and_url, u'')
 
-    # Actually there is no a URLHistory Object, only its bindings, using custom
-    # properties to enrich the URI object.
-    # TODO: review cybox python code to add such object.
+    for related in GetRelatedObjects(cybox_file, cyboxURI):
+        if related.value._value == url:
+            AddCustomProperty(related, row[u'type'], row['sourcetype'],
+                              timestamp.isoformat())
+            break
+    else:
+        # Actually there is no a URLHistory Object, only its bindings, using
+        # custom properties to enrich the URI object.
+        # TODO: review cybox python code to add such object.
+        cybox_uri = cyboxURI(value=url, type_=u'URLHistoryObjectType')
+        AddCustomProperty(cybox_uri, name=u'user', description=u'', value=user)
+        AddCustomProperty(cybox_uri, name=u'URL history information',
+                          description=u'msiecf event data', value=description)
 
-    cybox_uri = cyboxURI(value=url, type_=u'URLHistoryObjectType')
-    AddCustomProperty(cybox_uri, name=u'user', description=u'', value=user)
-    AddCustomProperty(cybox_uri, row[u'type'], row['sourcetype'],
-                      timestamp.isoformat())
-    AddCustomProperty(cybox_uri, name=u'URL history information',
-                      description=u'msiecf event data', value=description)
-
-    cybox_file.add_related(cybox_uri, u'Contains', inline=True)
+        cybox_file.add_related(cybox_uri, u'Contains', inline=True)
 
 
 def WinRegMruListExCallback(cybox_file, row):
@@ -562,6 +581,7 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
     for key, cybox_file in cybox_files.iteritems():
         observables.add(cyboxObservable(cybox_file))
 
+    # TODO.
     print observables.to_xml()
 
 
