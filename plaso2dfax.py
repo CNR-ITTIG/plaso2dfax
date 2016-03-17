@@ -532,10 +532,15 @@ if __name__ == u'__main__':
                         default=u'', type=unicode)
     parser.add_argument(u'-o', action=u'store', dest=u'output',
                         default=u'sys.stdout', type=unicode)
+    parser.add_argument(u'-v', action=u'store_true', dest=u'verbose',
+                        default=False)
     parser.add_argument(u'input', nargs=u'?', default=u'-', type=unicode)
 
     options = parser.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG)  # TBR
+    if options.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.WARNING)
 
     Convert(options.description, options.output, options.input)
