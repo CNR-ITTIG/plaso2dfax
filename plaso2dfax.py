@@ -55,10 +55,6 @@ from cybox.objects.uri_object import URI as cyboxURI
 from cybox.objects.win_file_object import WinFile as cyboxWinFile
 from cybox.objects import win_registry_key_object as cyboxWinRegistry
 
-from plaso.cli import analysis_tool
-from plaso.frontend import analysis_frontend
-from plaso.lib import errors
-from plaso.lib import timelib
 
 # ----------------------------------------------------------------------------
 
@@ -167,58 +163,6 @@ def SplitWinRegistryEvent(event_registry_description):
     registry_data = re_match.group(3)
 
     return registry_hive, registry_key, registry_data
-
-# ----------------------------------------------------------------------------
-
-
-def GetPlasoStorageInformation(pbfilename):
-    """TODO"""
-    try:
-        front_end = analysis_frontend.AnalysisFrontend()
-        storage_file = front_end.OpenStorage(pbfilename)
-    except IOError as exception:
-        logging.error(
-            u'Unable to open storage file: {0:s} with error: {1:s}'.format(
-                pbfilename, exception))
-        return
-
-    storage_information_list = storage_file.GetStorageInformation()
-
-    if not storage_information_list:
-        logging.warning(u'No storage information found!')
-        return
-
-    # TODO: Actually considering only the first Collection Information.
-    storage_information = storage_information_list[0]
-
-    collection_information = getattr(
-        storage_information, u'collection_information', None)
-    if not collection_information:
-        logging.warning(u'Missing collection information.')
-        return
-
-    filename = collection_information.get(u'file_processed', u'N/A')
-    time_of_run = collection_information.get(u'time_of_run', 0)
-    time_of_run = timelib.Timestamp.CopyToIsoFormat(time_of_run)
-
-    lines_of_text.append(u'Storage file:\t\t{0:s}'.format(
-        self._storage_file_path))
-    lines_of_text.append(u'Serialization format:\t{0:s}'.format(
-        storage_file.serialization_format))
-    lines_of_text.append(u'Source processed:\t{0:s}'.format(filename))
-    lines_of_text.append(u'Time of processing:\t{0:s}'.format(time_of_run))
-
-    lines_of_text.append(u'')
-    lines_of_text.append(u'Collection information:')
-
-    for key, value in collection_information.iteritems():
-        if key in [u'file_processed', u'time_of_run']:
-            continue
-        if key == u'parsers':
-            value = u', '.join(sorted(value))
-        lines_of_text.append(u'\t{0:s} = {1!s}'.format(key, value))
-
-    storage_file.Close()
 
 # ----------------------------------------------------------------------------
 
@@ -527,15 +471,13 @@ def EventToCybox(row, cybox_files):
     cybox_files[filename] = cybox_file
 
 
-def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
-            pbfilename=u''):
+def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin'):
     """The main loop routine in charge to read the data and to report results.
 
     Args:
         description: todo.
         output: the output channel to be used for the results.
         input: the input channel to be used to feed l2tcsv data.
-        pbfilename: the Plaso Buffer (pb) storage file.
     """
     cybox_files = {}
     rows = []
@@ -558,17 +500,7 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
 
     observables = cyboxObservables()
 
-    """
-    # TODO: messy code to be removed.
-    event = cyboxEvent()
-    event.description = u'TODO'
-    actions = cyboxAction.Actions()
-    action = cyboxAction.Action()
-    action_associated_objects = cyboxAction.AssociatedObjects()
-    """
-
-    # GetPlasoStorageInformation(pbfilename)
-    # Actually hard coded, take it from plaso storage file if available.
+    # Actually hard coded.
     tool = cyboxTools.ToolInformation(u'Plaso')
     tool.version = u'1.4.1'
     tool_list = cyboxTools.ToolInformationList()
@@ -600,13 +532,10 @@ if __name__ == u'__main__':
                         default=u'', type=unicode)
     parser.add_argument(u'-o', action=u'store', dest=u'output',
                         default=u'sys.stdout', type=unicode)
-    parser.add_argument(u'-s', action=u'store', dest=u'pbfilename',
-                        default=u'', type=unicode)
     parser.add_argument(u'input', nargs=u'?', default=u'-', type=unicode)
 
     options = parser.parse_args()
 
     logging.basicConfig(level=logging.DEBUG)  # TBR
 
-    Convert(options.description, options.output, options.input,
-            options.pbfilename)
+    Convert(options.description, options.output, options.input)
