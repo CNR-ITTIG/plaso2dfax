@@ -326,14 +326,14 @@ def UpgradeFileObjectType(cybox_file, extra_dict, row):
 
 
 def PlasoEventCallback(cybox_file, row):
-    '''TODO'''
+    """TODO"""
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
-    AddCustomProperty(cybox_file, row[u'type'], row['sourcetype'],
+    AddCustomProperty(cybox_file, row[u'type'], row[u'sourcetype'],
                       timestamp.isoformat())
 
 
 def FileStatCallback(cybox_file, row):
-    '''TODO'''
+    """TODO"""
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
     for desc in row[u'type'].split(u';'):
@@ -360,7 +360,7 @@ def HachoirCallback(cybox_file, row):
         row: a l2tcsv row.
     """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
-    AddCustomProperty(cybox_file, row[u'type'], row['sourcetype'],
+    AddCustomProperty(cybox_file, row[u'type'], row[u'sourcetype'],
                       timestamp.isoformat())
 
 
@@ -384,7 +384,7 @@ def InternetExplorerHistoryCallback(cybox_file, row):
 
     for related in GetRelatedObjects(cybox_file, cyboxURI):
         if related.value._value == url:
-            AddCustomProperty(related, row[u'type'], row['sourcetype'],
+            AddCustomProperty(related, row[u'type'], row[u'sourcetype'],
                               timestamp.isoformat())
             break
     else:
@@ -508,7 +508,7 @@ def EventToCybox(row, cybox_files):
     extra_dict = FieldsToDict(row[u'extra'])
 
     if not filename:
-        logging.warning('Skipping row, filename is empty.')
+        logging.warning(u'Skipping row, filename is empty.')
         return
 
     cybox_file = cybox_files.get(filename, None)
@@ -579,8 +579,14 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin',
     for key, cybox_file in cybox_files.iteritems():
         observables.add(cyboxObservable(cybox_file))
 
-    # TODO.
-    print observables.to_xml()
+    try:
+        if output != u'sys.stdout':
+            file_out = open(output, u'w')
+        else:
+            file_out = sys.stdout
+        file_out.write(observables.to_xml().encode(u'utf8'))
+    except IOError as exception_io:
+        logging.error(u'IO error: {0:s}'.format(exception_io))
 
 
 if __name__ == u'__main__':
