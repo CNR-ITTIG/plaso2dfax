@@ -26,7 +26,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-"""Plaso l2tcsv format to CybOX/DFax conversion."""
+"""Plaso l2tcsv format to CybOX/DFax conversion utility."""
 
 import argparse
 import codecs
@@ -59,29 +59,21 @@ from cybox.objects import win_registry_key_object as cyboxWinRegistry
 
 # ----------------------------------------------------------------------------
 
+# The followings are the L2TCSV 17 columns. When filtering l2tcsv input files,
+# e.g. using grep, the original header will be most likely stripped out.
+# In this case the tool must provided the missing headers to properly access
+# each line.
 L2TCSV_HEADER = [
     u'date', u'time', u'timezone', u'MACB', u'source', u'sourcetype', u'type',
     u'user', u'host', u'short', u'desc', u'version', u'filename', u'inode',
     u'notes', u'format', u'extra'
 ]
 
-PLASO_DEFAULT_OBSERVABLES = {
-    u'major_version': 1,
-    u'minor_version': 4,
-    u'update_version': 1,
-    u'observables': [{}],
-    u'observable_package_source': {
-        u'name': u'Plaso',
-        u'information_source_type': u'l2tcsv',
-    },
-}
-
 # ----------------------------------------------------------------------------
 
 
 def AddCustomProperty(cybox_object, name, description, value):
     """Helper function to add a custom property to a CybOX object.
-       This function is used to take into account unmanged Plaso events.
 
     Args:
         cybox_object: the CybOX object to be updated.
@@ -293,7 +285,17 @@ def UpgradeFileObjectType(cybox_file, extra_dict, row):
 
 
 def PlasoEventCallback(cybox_file, row, cybox_related):
-    """TODO"""
+    """Default callback to handle Plaso events. It's the callback used for
+       CybOX objects not already implemented or for unspecified ones.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+        cybox_related: helper dictionary for related objects fast lookup.
+
+    Returns:
+        The updated cybox_file and its cybox_related.
+    """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
     AddCustomProperty(cybox_file, row[u'type'], row[u'sourcetype'],
                       timestamp.isoformat())
@@ -301,7 +303,16 @@ def PlasoEventCallback(cybox_file, row, cybox_related):
 
 
 def FileStatCallback(cybox_file, row, cybox_related):
-    """TODO"""
+    """Default callback to handle file system Plaso events.
+
+    Args:
+        cybox_file: the CybOX object file to be updated.
+        row: a l2tcsv row.
+        cybox_related: helper dictionary for related objects fast lookup.
+
+    Returns:
+        The updated cybox_file and its cybox_related.
+    """
     timestamp = GetDatetime(row[u'date'], row[u'time'], row[u'timezone'])
 
     for desc in row[u'type'].split(u';'):
@@ -567,9 +578,16 @@ def EventToCybox(row, cybox_files, cybox_files_related):
     filename = row[u'filename']
     extra_dict = FieldsToDict(row[u'extra'])
 
+    # The filename is used to map CybOX objects, so it's a mandatory field.
     if not filename:
         logging.warning(u'Skipping row, filename is empty.')
         return
+
+    # CybOX file objects are the main aggregators to map properties and to
+    # link objects, so the first step is to get an existing object or to create
+    # a new one. If the file object is already in, a check is made to see if
+    # the current event provides more file system details than current ones.
+    # This upgrade is needed since the tool parses the input data as provided.
 
     cybox_file = cybox_files.get(filename, None)
     if not cybox_file:
@@ -578,10 +596,21 @@ def EventToCybox(row, cybox_files, cybox_files_related):
     else:
         cybox_file = UpgradeFileObjectType(cybox_file, extra_dict, row)
 
+    # CybOX related objects are used to fast lookup for objects contained
+    # (generally which has a relationship) with the given CybOX file object.
+    # This is used for example when mapping events contained inside a Windows
+    # Event file: every Windows event generates two Plaso timestamped events
+    # so, to avoid a linear search in the CybOX objects to update with the
+    # second timestamp the object already mapped in, the tool uses a dict
+    # called cybox_related. This approach is far to be the best, and it should
+    # be refactored.
+
     if filename not in cybox_files_related:
         cybox_files_related[filename] = {}
     cybox_related = cybox_files_related[filename]
 
+    # Once the tools has got or has generated the CybOX file object and its
+    # related, the proper callback will be invoked or the default one.
     callback_function = EVENT_TO_CYBOX_CALLBACKS.get(row[u'format'], None)
     if not callback_function:
         callback_function = PlasoEventCallback
@@ -611,7 +640,7 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin'):
         first_row = reader.next()
         if first_row[u'date'] != u'date' and first_row[u'extra'] != u'extra':
             EventToCybox(first_row, cybox_files, cybox_files_related)
-        # Process lines.
+        # Process lines, one-step over data without memory.
         for row in reader:
             EventToCybox(row, cybox_files, cybox_files_related)
     except IOError as exception_io:
@@ -644,16 +673,20 @@ def Convert(description=u'', output=u'sys.stdout', input=u'sys.stdin'):
 if __name__ == u'__main__':
 
     tool_description = u'plaso2dfax converter'
-    tool_usage = None  # TODO: add usage.
+    tool_usage = (u'please see the following examples\n'
+                  '%(prog)s -o provenance.xml plaso.l2tcsv\n'
+                  'cat plaso.l2tcsv | %(prog)s -o provenance.xml\n'
+                  'cat plaso.l2tcsv | %(prog)s')
 
     parser = argparse.ArgumentParser(description=tool_description,
                                      usage=tool_usage)
     parser.add_argument(u'-d', action=u'store', dest=u'description',
-                        default=u'', type=unicode)
+                        default=u'', type=unicode, help=u'actually not used')
     parser.add_argument(u'-o', action=u'store', dest=u'output',
-                        default=u'sys.stdout', type=unicode)
+                        default=u'sys.stdout', type=unicode,
+                        help=u'output file name, otherwise stdout is used')
     parser.add_argument(u'-v', action=u'store_true', dest=u'verbose',
-                        default=False)
+                        default=False, help=u'to get some debug messages')
     parser.add_argument(u'input', nargs=u'?', default=u'-', type=unicode)
 
     options = parser.parse_args()
